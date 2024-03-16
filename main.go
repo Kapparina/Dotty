@@ -1,3 +1,6 @@
+/*
+Copyright © 2024 Kapparina 116474667+Kapparina@users.noreply.github.com
+*/
 package main
 
 import (
@@ -5,97 +8,80 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/akamensky/argparse"
+	"github.com/Kapparina/Dotty/cmd"
+	"github.com/Kapparina/Dotty/pkg/helpers/files"
+	"github.com/fatih/color"
+	"github.com/spf13/viper"
 )
 
-type ExitCode int
-
-const (
-	NoArgsErr ExitCode = iota
-	Success
-	ScanDirErr
-	CloneRepoErr
-	CopyFilesErr
+var (
+	dottyDir       *string      = new(string)
+	envFile        *string      = new(string)
+	dottyEnvConfig *viper.Viper = viper.New()
+	// dottyRuntimeConfig *viper.Viper = new(viper.Viper)
 )
 
-type ExitHandler struct {
-	ExitCode
-	error
-}
+func init() {
+	notifyAttemptCreation := func(path string) {
+		color.Set(color.FgYellow)
+		fmt.Printf("`%s` does not exist - Attempting creation...\n", filepath.Clean(path))
+		color.Unset()
+	}
+	homeDir, homeDirErr := os.UserHomeDir()
+	if homeDirErr != nil {
+		panic(fmt.Errorf("Fatal error getting homeDir directory: %w \n", homeDirErr))
+	}
+	*dottyDir = filepath.Join(homeDir, ".config", "dotty")
+	defaultDottyConfigFile := filepath.Join(*dottyDir, "config.toml")
 
-func (e *ExitHandler) Error() string {
-	return e.error.Error()
-}
+	*envFile = filepath.Join(*dottyDir, ".dotty")
+	dottyEnvConfig.SetConfigType("env")
+	dottyEnvConfig.SetConfigFile(*envFile)
+	dottyEnvConfig.SetDefault("DOTTY_CONFIG_PATH", fmt.Sprintf("'%s'", defaultDottyConfigFile))
 
-func (e *ExitHandler) Exit() {
-	switch e.ExitCode {
-	case NoArgsErr:
-		fmt.Println("No arguments were provided.")
-	default:
-		if e.error != nil {
-			fmt.Println(e.error)
+	if _, dottyDirErr := os.Stat(*dottyDir); os.IsNotExist(dottyDirErr) {
+		notifyAttemptCreation(*dottyDir)
+		newDottyDir()
+	}
+	if _, envFileErr := os.Stat(*envFile); os.IsNotExist(envFileErr) {
+		notifyAttemptCreation(*envFile)
+		newEnvFile()
+		configWriteErr := dottyEnvConfig.WriteConfigAs(*envFile)
+		if configWriteErr != nil {
+			color.Set(color.FgHiRed)
+			panic(fmt.Errorf("fatal error writing to .dotty file:\n%w\n", configWriteErr))
+		}
+	} else {
+		envReadErr := dottyEnvConfig.ReadInConfig()
+		if envReadErr != nil {
+			color.Set(color.FgHiRed)
+			panic(fmt.Errorf("fatal error reading .dotty file:\n%w\n", envReadErr))
 		}
 	}
-	os.Exit(int(e.ExitCode))
 }
 
-const (
-	dotFilesRepo string = "https://github.com/Kapparina/dotfiles"
-)
-
-type dotFile struct {
-	name          string
-	repoLocation  string
-	localLocation string
-}
-
-func getHomePath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
+func newDottyDir() {
+	dirCreationErr := files.CreateDir(*dottyDir)
+	if dirCreationErr != nil {
+		color.Set(color.FgHiRed)
+		panic(fmt.Errorf("Fatal error creating Dotty config directory:\n%w\n", dirCreationErr))
 	}
-	return home, nil
+	color.Set(color.FgHiGreen)
+	fmt.Println("Dotty config directory created successfully!")
+	color.Unset()
 }
 
-// ScanDir recursively scans the given directory path
-func ScanDir(dirPath string) error {
-	return filepath.Walk(dirPath, func(path string, f os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		// Print the path of the file
-		fmt.Println(path)
-		return nil
-	})
+func newEnvFile() {
+	fileCreationErr := files.CreateFile(*envFile)
+	if fileCreationErr != nil {
+		color.Set(color.FgHiRed)
+		panic(fmt.Errorf("Fatal error creating .dotty file: \n%w\n", fileCreationErr))
+	}
+	color.Set(color.FgHiGreen)
+	fmt.Println(".dotty file created successfully!")
+	color.Unset()
 }
 
 func main() {
-	var runtimeTerminator *ExitHandler = &ExitHandler{Success, nil}
-	defer runtimeTerminator.Exit()
-
-	parser := argparse.NewParser("gocode", "Go code with argparse")
-	stringArg := parser.String("s", "someArg", &argparse.Options{Required: true, Help: "Some argument"})
-
-	if err := parser.Parse(os.Args); err != nil {
-		runtimeTerminator.ExitCode = NoArgsErr
-		fmt.Println(parser.Usage(err))
-		runtimeTerminator.Exit()
-	}
-
-	fmt.Println("Input Arg: ", *stringArg)
-
-	homePath, pathErr := getHomePath()
-	if pathErr != nil {
-		runtimeTerminator.ExitCode = ScanDirErr
-		runtimeTerminator.error = pathErr
-		return
-	}
-	var dotFilesPath string = homePath + "/dots"
-
-	scanErr := ScanDir(dotFilesPath)
-	if scanErr != nil {
-		runtimeTerminator.ExitCode = ScanDirErr
-		runtimeTerminator.error = scanErr
-		return
-	}
+	cmd.Execute()
 }
