@@ -2,91 +2,89 @@ package files
 
 import (
 	"errors"
-	"fmt"
-	"io"
-	"io/fs"
 	"os"
-	"path/filepath"
 	"testing"
 
-	derr "github.com/Kapparina/Dotty/pkg/errors"
+	. "github.com/Kapparina/Dotty/pkg/errors"
 )
 
 func TestWriteToFile(t *testing.T) {
-	testCases := []struct {
-		name         string
-		destination  func() (string, error)
-		expectedErr  *derr.FileError
-		cleanupAfter bool
+	tests := []struct {
+		name        string
+		destination string
+		data        []byte
+		expectedErr error
 	}{
 		{
-			name: "Valid Destination",
-			destination: func() (string, error) {
-				tempFile, createErr := os.CreateTemp("", "temp*.txt")
-				if createErr != nil {
-					return "", createErr
-				}
-				return tempFile.Name(), nil
-			},
-			expectedErr:  nil,
-			cleanupAfter: true,
+			name:        "ValidPathAndData",
+			destination: "test_valid.txt",
+			data:        []byte("Hello, World!"),
+			expectedErr: nil,
 		},
 		{
-			name: "Non-existing Destination",
-			destination: func() (string, error) {
-				nonexistingPath := filepath.Join("some", "nonexisting", "path", "temp.txt")
-				return nonexistingPath, nil
-			},
-			expectedErr: &derr.FileError{
-				Operation: "writing to file",
-				Path:      "",
-				Err:       errors.New("the system cannot find the path specified"),
-			},
-			cleanupAfter: false,
+			name:        "InvalidPath",
+			destination: "invalid/test.txt",
+			data:        []byte("Hello, World!"),
+			expectedErr: NewFileError(
+				"writing to file",
+				"invalid/test.txt",
+				Write,
+				"open invalid/test.txt: The system cannot find the path specified.",
+			),
 		},
 		{
-			name: "Access Denied Destination",
-			destination: func() (string, error) {
-				deniedPath := filepath.Join("C:\\Windows\\System32", "temp.txt") // path that requires admin access
-				return deniedPath, nil
-			},
-			expectedErr: &derr.FileError{
-				Operation: "writing to file",
-				Path:      "",
-				Err:       errors.New("Access is denied."),
-			},
-			cleanupAfter: false,
+			name:        "NilData",
+			destination: "test_nil.txt",
+			data:        nil,
+			expectedErr: nil,
 		},
 	}
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			destination, destinationErr := tc.destination()
-			if destinationErr != nil {
-				t.Fatal(destinationErr)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := WriteToFile(tt.destination, tt.data)
+			if err != nil && tt.expectedErr == nil {
+				t.Errorf("WriteToFile() unexpected error:\nGot: %v\nExpected: nil", err)
+			} else if err != nil && tt.expectedErr != nil {
+				var gotErr *WriteError
+				if errors.As(err, &gotErr) {
+					if err.Error() != tt.expectedErr.Error() {
+						t.Errorf("WriteToFile() unexpected error:\nGot: %v\nExpected: %v", err, tt.expectedErr)
+					}
+				}
 			}
-			fmt.Printf("Testing with destination: %s\n", destination) // Printing the destination
-			if tc.expectedErr != nil {
-				tc.expectedErr.Path = destination
+
+			// Defer file cleanup after the test
+			defer func() {
+				if _, err := os.Stat(tt.destination); err == nil || os.IsExist(err) {
+					err := os.Remove(tt.destination)
+					if err != nil {
+						t.Errorf("Error removing the test file: %v", err)
+					}
+				}
+			}()
+
+			// If the destination is valid and data is not nil, check the content of the file
+			if tt.name == "ValidPathAndData" {
+				if file, err := os.Open(tt.destination); err == nil {
+					content := make([]byte, len(tt.data))
+					_, err := file.Read(content)
+					if err != nil || string(content) != string(tt.data) {
+						t.Errorf("Unexpected content in file.\nGot: %s\nWant: %s", string(content), string(tt.data))
+					}
+					file.Close()
+				}
 			}
-			data := []byte("test data")
-			file, openErr := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE, fs.ModePerm)
-			if openErr != nil {
-				t.Fatal(openErr)
+
+			if tt.name == "NilData" {
+				if _, err := os.Stat(tt.destination); err != nil && os.IsNotExist(err) {
+					t.Error("Expected file to be created, it was not")
+				}
 			}
-			_, writeErr := io.WriteString(file, string(data))
-			fmt.Printf("Write error: %v\n", writeErr) // Printing the error if any
-			var e *derr.FileError
-			if errors.As(writeErr, &e) && tc.expectedErr != nil && e.Operation == tc.expectedErr.Operation && errors.Is(e.Err, tc.expectedErr.Err) {
-				return // correct error expected and returned
-			}
-			if writeErr != nil {
-				t.Fatalf("unexpected error: got %v", writeErr)
-			}
-			if tc.expectedErr != nil {
-				t.Fatal("expected error but got none")
-			}
-			if tc.cleanupAfter {
-				os.Remove(destination)
+
+			// Clean up test file if it was created
+			if _, err := os.Stat(tt.destination); err == nil || os.IsExist(err) {
+				os.Remove(tt.destination)
 			}
 		})
 	}

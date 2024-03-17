@@ -59,7 +59,7 @@ type ErrorType int
 type ErrorCreator func(*FileError) FileOperationError
 
 const (
-	PartialAccess = iota
+	PartialAccess ErrorType = iota
 	NoAccess
 	NoExist
 	InvalidPath
